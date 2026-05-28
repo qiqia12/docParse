@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: docparse
+      POSTGRES_USER: docparse
+      POSTGRES_PASSWORD: password
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docparse"]
+      interval: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+
+  parser:
+    build: ./parser
+    environment:
+      GRPC_PORT: "50051"
+      MAX_WORKERS: "4"
+    volumes:
+      - ./data/files:/data/files
+      - ./data/images:/data/images
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build: ./api
+    environment:
+      PORT: "3000"
+      DATABASE_URL: postgresql://docparse:password@postgres:5432/docparse
+      REDIS_URL: redis://redis:6379
+      GRPC_PARSER_HOST: parser:50051
+      MAX_FILE_SIZE: "104857600"
+      FILE_RETENTION_HOURS: "24"
+    volumes:
+      - ./data/files:/data/files
+      - ./data/images:/data/images
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  nginx:
+    build: ./web
+    ports:
+      - "8080:80"
+    volumes:
+      - ./config/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api

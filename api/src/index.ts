@@ -6,12 +6,14 @@ import { config } from './config.js';
 import { migrate } from './db.js';
 import { documentsRoutes } from './routes/documents.js';
 import { formatsRoutes } from './routes/formats.js';
+import { startCleanupCron } from './cron/cleanup.js';
 
 async function main() {
   // Skip migration if DATABASE_URL is not set (dev mode without PG)
   if (config.DATABASE_URL && config.DATABASE_URL !== 'postgresql://localhost:5432/docparse') {
     try {
       await migrate();
+      startCleanupCron();
     } catch (err) {
       console.warn('Database migration failed (PG may not be running):', (err as Error).message);
     }
