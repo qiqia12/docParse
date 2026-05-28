@@ -45,3 +45,9 @@
 .markdown-body th { background: #f6f8fa; }
 
 .markdown-body img { max-width: 100%; }
+
+.low-confidence-page {
+  border-left: 3px solid #ff9800;
+  padding-left: 16px;
+  margin: 8px 0;
+}
