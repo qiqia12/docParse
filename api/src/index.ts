@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
 import { config } from './config.js';
 import { migrate } from './db.js';
 import { documentsRoutes } from './routes/documents.js';
@@ -18,6 +19,7 @@ async function main() {
   const app = Fastify({ logger: true });
 
   await app.register(cors, { origin: true });
+  await app.register(multipart, { limits: { fileSize: config.MAX_FILE_SIZE } });
   await app.register(documentsRoutes, { prefix: '/api/v1' });
   await app.register(formatsRoutes, { prefix: '/api/v1' });
 
