@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package docparse;
+
+service DocumentParser {
+  rpc Parse(ParseRequest) returns (stream ParseChunk);
+  rpc GetSupportedFormats(Empty) returns (FormatList);
+}
+
+message Empty {}
+
+message ParseRequest {
+  bytes file_content = 1;
+  string filename = 2;
+  string task_id = 3;
+  ParseOptions options = 4;
+}
+
+message ParseOptions {
+  bool extract_images = 1;
+  bool extract_tables = 2;
+  int32 max_pages = 3;
+  string output_style = 4;
+}
+
+message ParseChunk {
+  int32 page_number = 1;
+  int32 total_pages = 2;
+  string markdown = 3;
+  repeated ImageInfo images = 4;
+  float confidence = 5;
+  bool is_complete = 6;
+}
+
+message ImageInfo {
+  int32 index = 1;
+  string image_id = 2;
+  string alt_text = 3;
+  int32 width = 4;
+  int32 height = 5;
+}
+
+message FormatList {
+  repeated string mime_types = 1;
+}
