@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { db } from '../db.js';
 import { fileStore } from '../services/file-store.js';
 import { parseStream } from '../services/grpc-client.js';
+import { sseManager } from '../services/sse-manager.js';
 
 const ALLOWED_MIMES = new Set([
   'text/plain',
@@ -97,13 +98,27 @@ export const documentsRoutes: FastifyPluginAsync = async (app) => {
           pageNum = chunk.pageNumber;
           lastConfidence = chunk.confidence;
           fullMarkdown += chunk.markdown;
+          sseManager.emitProgress(task.id, {
+            page: chunk.pageNumber,
+            total: chunk.totalPages,
+            confidence: chunk.confidence,
+          });
+          sseManager.emitChunk(task.id, {
+            page: chunk.pageNumber,
+            markdown: chunk.markdown,
+          });
         }
+        sseManager.emitComplete(task.id, {
+          totalPages: pageNum || 1,
+          overallConfidence: lastConfidence,
+        });
         await db.query(
           `UPDATE tasks SET status = 'completed', markdown = $1, total_pages = $2, confidence = $3, updated_at = NOW()
            WHERE id = $4`,
           [fullMarkdown, pageNum || 1, lastConfidence, task.id]
         );
       } catch (err: any) {
+        sseManager.emitError(task.id, { code: 'PARSE_FAILED', message: err.message });
         try {
           await db.query(
             `UPDATE tasks SET status = 'failed', error_message = $1, updated_at = NOW() WHERE id = $2`,
@@ -169,5 +184,62 @@ export const documentsRoutes: FastifyPluginAsync = async (app) => {
     } catch {
       return reply.status(500).send({ error: 'Database unavailable' });
     }
+  });
+
+  // GET /documents/:id/stream - SSE
+  app.get('/documents/:id/stream', async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    try {
+      const { rows } = await db.query(`SELECT status, markdown FROM tasks WHERE id = $1`, [id]);
+      if (rows.length === 0) {
+        return reply.status(404).send({ error: 'Task not found' });
+      }
+      const task = rows[0];
+
+      // Already completed: send complete immediately
+      if (task.status === 'completed') {
+        reply.raw.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+        reply.raw.write(`event: complete\ndata: ${JSON.stringify({ markdown: task.markdown, cached: true })}\n\n`);
+        reply.raw.end();
+        return;
+      }
+
+      if (task.status === 'failed') {
+        return reply.status(410).send({ error: 'Task failed' });
+      }
+    } catch (_) {
+      // DB unavailable, stream won't work
+      return reply.status(500).send({ error: 'Database unavailable' });
+    }
+
+    // Still parsing: set up SSE connection
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    const onEvent = (evt: any) => {
+      if (evt.taskId === id) {
+        reply.raw.write(`event: ${evt.event}\ndata: ${JSON.stringify(evt.data)}\n\n`);
+        if (evt.event === 'complete' || evt.event === 'error') {
+          sseManager.off('event', onEvent);
+          reply.raw.end();
+        }
+      }
+    };
+
+    sseManager.on('event', onEvent);
+
+    request.raw.on('close', () => {
+      sseManager.off('event', onEvent);
+    });
   });
 };
